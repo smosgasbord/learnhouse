@@ -1,0 +1,89 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    # Removed host port binding (80:80) since routing will be handled by Traefik
+    volumes:
+      - .:/usr/learnhouse
+    env_file:
+      - ./extra/a.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - learnhouse-network
+    labels:
+      # Traefik labels
+      - traefik.enable=true
+      - traefik.http.middlewares.gzip.compress=true
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.routers.http-learnhouse-app.entryPoints=http
+      - traefik.http.routers.http-learnhouse-app.middlewares=redirect-to-https
+      - traefik.http.routers.http-learnhouse-app.rule=Host(`edu.smosgasbord.xyz`) && PathPrefix(`/`)
+      - traefik.http.routers.http-learnhouse-app.service=http-learnhouse-app
+      - traefik.http.routers.https-learnhouse-app.entryPoints=https
+      - traefik.http.routers.https-learnhouse-app.middlewares=gzip
+      - traefik.http.routers.https-learnhouse-app.rule=Host(`edu.smosgasbord.xyz`) && PathPrefix(`/`)
+      - traefik.http.routers.https-learnhouse-app.service=https-learnhouse-app
+      - traefik.http.routers.https-learnhouse-app.tls.certresolver=letsencrypt
+      - traefik.http.routers.https-learnhouse-app.tls=true
+      - traefik.http.services.http-learnhouse-app.loadbalancer.server.port=80
+      - traefik.http.services.https-learnhouse-app.loadbalancer.server.port=80
+
+      # Caddy labels
+      - caddy.encode=zstd gzip
+      - caddy.handle_path.0_reverse_proxy={{upstreams 80}}
+      - caddy.handle_path=/*
+      - caddy.header=-Server
+      - caddy.try_files={path} /index.html /index.php
+      - caddy=https://edu.smosgasbord.xyz
+
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=learnhouse
+      - POSTGRES_PASSWORD=learnhouse
+      - POSTGRES_DB=learnhouse
+    networks:
+      - learnhouse-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U learnhouse"]
+      interval: 5s
+      timeout: 4s
+      retries: 5
+    # Removed port exposure (should be internal only)
+    volumes:
+      - learnhouse-db-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.2.3
+    restart: always
+    networks:
+      - learnhouse-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 4s
+      retries: 5
+    # Removed port exposure (should be internal only)
+    volumes:
+      - learnhouse-redis-data:/data
+
+  chromadb:
+    image: chromadb/chroma:0.5.16
+    networks:
+      - learnhouse-internal
+    # Removed port exposure (should be internal only)
+
+networks:
+  learnhouse-network:
+  learnhouse-internal:
+    internal: true
+
+volumes:
+  learnhouse-db-data:
+  learnhouse-redis-data:
